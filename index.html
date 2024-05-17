@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Log Viewer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.0.3/pako_inflate.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/js-untar@2.0.0/build/dist/untar.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        #log-output {
+            white-space: pre-wrap;
+            background-color: #f4f4f4;
+            padding: 10px;
+            border: 1px solid #ccc;
+            margin-top: 20px;
+        }
+        .log-entry {
+            padding: 5px 10px;
+            border-bottom: 1px solid #ccc;
+            margin-bottom: 5px;
+            background-color: #f9f9f9;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            font-weight: bold;
+            font-size: 12px;
+        }
+
+        .log-body {
+            margin-top: 3px;
+            font-size: 12px;
+        }
+
+        .log-entry:nth-child(even) {
+            background-color: #e9e9e9;
+        }
+    </style>
+</head>
+<body>
+<h1>Log Viewer</h1>
+<input type="file" id="logFile" accept=".tar.gz">
+<select id="characterSelect" style="display:none;">
+    <option value="">Select Character</option>
+</select>
+<div id="eventFilter" style="display:none; margin-top: 10px;">
+    <label><input type="checkbox" class="event-type" value="systemEvents" checked> System Events</label>
+    <label><input type="checkbox" class="event-type" value="warningEvents" checked> Warning Events</label>
+    <label><input type="checkbox" class="event-type" value="infoEvents" checked> Info Events</label>
+    <label><input type="checkbox" class="event-type" value="storageEvents" checked> Storage Events</label>
+    <label><input type="checkbox" class="event-type" value="dialogEvents" checked> Dialog Events</label>
+</div>
+<div id="log-output"></div>
+
+
+<script>
+    const eventCategories = {
+        warningEvents: [
+            "The.*dies\\.",
+            ".*fell incapable\\.",
+            "dodged a.*attack\\.",
+            "failed to dodge the attack by.*for.*damage, leaving health at.*",
+            "attacked the.*, and missed\\.",
+            "attacked the.*with a.*for.*damage, (?:leaving their health at.*|dealing a fatal blow\\.)",
+            ".* attacks.* for .* damage(?: leaving it at \\d+% health\\.|, killing it!)",
+            "got caught trying to pickpocket.*\"s pockets!",
+            "whispered to.*\\.",
+            "attempted to listen in on.*'s private conversation with.*\\.",
+        ],
+
+        infoEvents: [
+            ":.*lost ownership of.*; it has returned to a wild state\\.",
+            "began heading on the.*toward.*\\.",
+            "rode.*pulled by a.*into the area from the.*\\.",
+            "rode a.*into the area from the.*\\.",
+            "left the area, heading on the.*road toward.*\\.",
+            "dismounted a.*\\.",
+            "climbed onto a.*\\.",
+            "prayed at the.*\\.",
+        ],
+
+        storageEvents: [
+            "stored some items in.*including.*",
+            "took some items from.*including.*",
+            "dropped some items including.*",
+        ],
+
+        systemEvents: [
+            "began working on.*",
+            "quit work on.*",
+            "joined work on.*",
+            "cancelled the work on.*",
+            "used.*(from the area)?.",
+            "ate.*from a.*\\.",
+
+            "came into the.*\\.",
+            "came out of.*\\.",
+            "exited the building.",
+            "entered the.*\\.",
+            "went into.*\\.",
+            "stepped out of the.*\\.",
+            "opened the window to.*",
+
+            "took off.*\\.",
+            "gave.*x\\d+ to.*",
+            "locked the.*\\.",
+            "renamed.*to.*\\.",
+            "dragged (?:an item|several items) toward.*\\.",
+
+            "became reflexively alert.",
+            "relaxed from a guarded posture.",
+            ".* hit themselves with their.*and connected, leaving health at \\d+\\%.",
+            "'s life has been forcibly ended with a fatal blow.",
+            "moved to make a final strike!",
+
+            "A.*can be seen making its way into the area.",
+            "The weather turns.*\\.",
+            "(Collecting|Attaching|Destroying|Smithing|Adjusting|Detaching|Dismantling|Engineering|Copying|Manufacturing|Sewing|Cooking|Crafting|Giving|Picking|Gathering).*has been completed.",
+        ],
+
+        dialogEvents: [
+            ":.*",
+        ]
+    };
+
+    let allCharacterLogs = {};
+
+    document.querySelectorAll('.event-type').forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+            const charId = document.getElementById('characterSelect').value;
+            if (charId) {
+                displayLogsForCharacter(charId);
+            }
+        });
+    });
+
+    document.getElementById('logFile').addEventListener('change', function(event) {
+        const file = event.target.files[0];
+        if (file) {
+            processAndStoreLogEvents(file);
+        }
+    });
+
+    document.getElementById('characterSelect').addEventListener('change', function(event) {
+        const charId = event.target.value;
+        if (charId) {
+            displayLogsForCharacter(charId);
+        } else {
+            document.getElementById('log-output').textContent = '';
+        }
+    });
+
+    async function processAndStoreLogEvents(file) {
+    const reader = new FileReader();
+
+    reader.onload = async (event) => {
+        try {
+            const arrayBuffer = event.target.result;
+            const extractedFiles = await untar(arrayBuffer);
+            allCharacterLogs = {};
+
+            for (const file of extractedFiles) {
+                const fileNamePattern = /(.+)-(\d+)-\d{2}-\d{2}-\d{4}-[a-z0-9]+\.log$/i;
+                const match = fileNamePattern.exec(file.name);
+
+                if (match) {
+                    const characterName = match[1];
+                    const characterId = match[2];
+
+                    const text = new TextDecoder().decode(file.buffer);
+                    const events = parseLogEvents(text);
+
+                    if (!allCharacterLogs[characterId]) {
+                        allCharacterLogs[characterId] = {
+                            name: characterName,
+                            logs: []
+                        };
+                    }
+
+                    allCharacterLogs[characterId].logs.push({
+                        date: file.name,
+                        events: events
+                    });
+                }
+            }
+
+            populateCharacterDropdown();
+        } catch (error) {
+            alert(error);
+            console.error('Error processing file:', error);
+        }
+    };
+
+    reader.onerror = function(error) {
+        console.error('FileReader error:', error);
+    };
+
+    reader.readAsArrayBuffer(file);
+}
+
+
+    function populateCharacterDropdown() {
+        const characterSelect = document.getElementById('characterSelect');
+        const eventFilter = document.getElementById('eventFilter');
+        characterSelect.style.display = 'block';
+        eventFilter.style.display = 'block';
+        characterSelect.innerHTML = '<option value="">Select Character</option>';
+
+        for (const charId in allCharacterLogs) {
+            const option = document.createElement('option');
+            option.value = charId;
+            option.textContent = allCharacterLogs[charId].name;
+            characterSelect.appendChild(option);
+        }
+    }
+
+    function displayLogsForCharacter(charId) {
+        const characterLogs = allCharacterLogs[charId].logs;
+
+        const allEvents = [];
+        characterLogs.forEach(log => {
+            allEvents.push(...log.events);
+        });
+
+        const uniqueEvents = Array.from(new Set(allEvents.map(event => JSON.stringify(event)))).map(event => JSON.parse(event));
+
+        uniqueEvents.sort((a, b) => {
+            if (a.year !== b.year) {
+                return b.year - a.year;
+            }
+            if (a.day !== b.day) {
+                return b.day - a.day;
+            }
+            if (a.hour !== b.hour) {
+                return b.hour - a.hour;
+            }
+            return b.index - a.index;
+        });
+
+        const logOutput = document.getElementById('log-output');
+        logOutput.innerHTML = '';
+
+        const selectedEventTypes = Array.from(document.querySelectorAll('.event-type:checked')).map(checkbox => checkbox.value);
+
+        uniqueEvents.forEach(event => {
+            if (selectedEventTypes.includes(event.type)) {
+                const logDiv = document.createElement('div');
+                logDiv.className = 'log-entry';
+                logDiv.innerHTML = formatEvent(event);
+                logOutput.appendChild(logDiv);
+            }
+        });
+    }
+
+    function formatEvent(event) {
+        return `<div class="log-header">
+<span>${event.year} Day ${event.day} Hour ${event.hour}</span>
+            <span>${event.type}</span>
+        </div><div class="log-body"><strong>${event.name}:</strong> ${event.content}</div>`;
+    }
+
+    function parseLogEvents(text) {
+        const allEventsPattern = [].concat(
+            eventCategories.warningEvents,
+            eventCategories.infoEvents,
+            eventCategories.storageEvents,
+            eventCategories.systemEvents,
+            eventCategories.dialogEvents
+        ).join("|");
+        const logMsgRe = new RegExp(`(?:\\(\\d+/\\d+/\\d+\\)\\s)?(?:Year (\\d+) Day (\\d+) Hour (\\d+) -)? (.*?):?\\s?(${allEventsPattern})`, "g");
+
+        let match;
+        const events = [];
+        let lastIndex = { year: 0, day: 0, hour: 0 };
+        let index = 0;
+
+        while ((match = logMsgRe.exec(text)) !== null) {
+            const [_, year, day, hour, name, content] = match;
+
+            const yearInt = year !== undefined ? parseInt(year, 10) : lastIndex.year;
+            const dayInt = day !== undefined ? parseInt(day, 10) : lastIndex.day;
+            const hourInt = hour !== undefined ? parseInt(hour, 10) : lastIndex.hour;
+
+            if (yearInt !== lastIndex.year || dayInt !== lastIndex.day || hourInt !== lastIndex.hour) {
+                index = 0;
+                lastIndex = { year: yearInt, day: dayInt, hour: hourInt };
+            } else {
+                index++;
+            }
+
+            const eventType = determineEventType(content, eventCategories);
+
+            if (content.includes("dragged an item")) {
+                console.log(text, yearInt, year, dayInt, day, hourInt, hour, index);
+            }
+
+            events.push({
+                year: yearInt,
+                day: dayInt,
+                hour: hourInt,
+                name: name.trim(),
+                content: content.trim(),
+                index: index,
+                type: eventType
+            });
+        }
+
+        return events;
+    }
+
+    function determineEventType(content) {
+        for (const [categoryName, patterns] of Object.entries(eventCategories)) {
+            const pattern = new RegExp(`^(${patterns.join("|")})`);
+            if (pattern.test(content)) {
+                return categoryName;
+            }
+        }
+        return "unknown";
+    }
+
+</script>
+</body>
+</html>
