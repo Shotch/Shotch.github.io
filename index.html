@@ -286,7 +286,7 @@
 
     function formatEvent(event) {
         return `<div class="log-header">
-<span>${event.year} Day ${event.day} Hour ${event.hour}</span>
+<span>${event.year} Day ${event.day} Hour ${event.hour} | ${event.date}</span>
             <span>${event.type}</span>
         </div><div class="log-body"><strong>${event.name}:</strong> ${event.content}</div>`;
     }
@@ -299,7 +299,7 @@
             eventCategories.systemEvents,
             eventCategories.dialogEvents
         ).join("|");
-        const logMsgRe = new RegExp(`(?:\\(\\d+/\\d+/\\d+\\)\\s)?(?:Year (\\d+) Day (\\d+) Hour (\\d+) -)? (.*?):?\\s?(${allEventsPattern})`, "g");
+        const logMsgRe = new RegExp(`(\\(\\d+/\\d+/\\d+\\)\\s)?(?:Year (\\d+) Day (\\d+) Hour (\\d+) -)? (.*?):?\\s?(${allEventsPattern})`, "g");
 
         let match;
         const events = [];
@@ -307,7 +307,7 @@
         let index = 0;
 
         while ((match = logMsgRe.exec(text)) !== null) {
-            const [_, year, day, hour, name, content] = match;
+            const [_, date, year, day, hour, name, content] = match;
 
             const yearInt = year !== undefined ? parseInt(year, 10) : lastIndex.year;
             const dayInt = day !== undefined ? parseInt(day, 10) : lastIndex.day;
@@ -327,6 +327,7 @@
             }
 
             events.push({
+                date: date,
                 year: yearInt,
                 day: dayInt,
                 hour: hourInt,
