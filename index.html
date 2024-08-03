@@ -266,7 +266,7 @@
             if (a.hour !== b.hour) {
                 return b.hour - a.hour;
             }
-            return b.index - a.index;
+            return a.index - b.index;
         });
 
         const logOutput = document.getElementById('log-output');
