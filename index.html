@@ -44,11 +44,35 @@
         .log-entry:nth-child(even) {
             background-color: #e9e9e9;
         }
+
+        .file-row {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .file-loader {
+            width: 14px;
+            height: 14px;
+            border: 2px solid #ccc;
+            border-top-color: #555;
+            border-radius: 50%;
+            animation: file-loader-spin 0.65s linear infinite;
+            flex-shrink: 0;
+        }
+        .file-loader[hidden] {
+            display: none;
+        }
+        @keyframes file-loader-spin {
+            to { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
 <h1>Log Viewer</h1>
-<input type="file" id="logFile" accept=".tar.gz, .zip">
+<div class="file-row">
+    <input type="file" id="logFile" accept=".tar.gz, .zip">
+    <span id="fileLoader" class="file-loader" hidden aria-label="Loading"></span>
+</div>
 <select id="characterSelect" style="display:none;">
     <option value="">Select Character</option>
 </select>
@@ -191,8 +215,15 @@
         return files.map((f) => ({ name: f.name, buffer: f.buffer }));
     }
 
+    function setFileLoading(on) {
+        const el = document.getElementById('fileLoader');
+        if (on) el.removeAttribute('hidden');
+        else el.setAttribute('hidden', '');
+    }
+
     async function processAndStoreLogEvents(file) {
     const reader = new FileReader();
+    setFileLoading(true);
 
     reader.onload = async (event) => {
         try {
@@ -247,10 +278,13 @@
         } catch (error) {
             alert(error);
             console.error('Error processing file:', error);
+        } finally {
+            setFileLoading(false);
         }
     };
 
     reader.onerror = function(error) {
+        setFileLoading(false);
         console.error('FileReader error:', error);
     };
 
