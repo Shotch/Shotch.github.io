@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Log Viewer</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.0.3/pako_inflate.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/js-untar@2.0.0/build/dist/untar.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -48,7 +48,7 @@
 </head>
 <body>
 <h1>Log Viewer</h1>
-<input type="file" id="logFile" accept=".tar.gz">
+<input type="file" id="logFile" accept=".tar.gz, .zip">
 <select id="characterSelect" style="display:none;">
     <option value="">Select Character</option>
 </select>
@@ -178,62 +178,70 @@
         }
     });
 
+    async function extractArchive(file, arrayBuffer) {
+        if (file.name.toLowerCase().endsWith('.zip')) {
+            const zip = await JSZip.loadAsync(arrayBuffer);
+            return Promise.all(
+                Object.values(zip.files)
+                    .filter((e) => !e.dir)
+                    .map((e) => e.async('arraybuffer').then((buffer) => ({ name: e.name, buffer })))
+            );
+        }
+        const files = await untar(arrayBuffer);
+        return files.map((f) => ({ name: f.name, buffer: f.buffer }));
+    }
+
     async function processAndStoreLogEvents(file) {
     const reader = new FileReader();
 
     reader.onload = async (event) => {
         try {
             const arrayBuffer = event.target.result;
-            const extractedFiles = await untar(arrayBuffer);
+            const extractedFiles = await extractArchive(file, arrayBuffer);
             allCharacterLogs = {};
 
-            for (const file of extractedFiles) {
-                const fileNamePattern = /(.+)-(\d+)-\d{2}-\d{2}-\d{4}-[a-z0-9]+\.log$/i;
-                const match = fileNamePattern.exec(file.name);
+            const filePatterns = [
+				{
+					re: /^\d{4}_\d{2}_\d{2}_(.+)_(\d+)\.log$/i,
+					extract: (m) => ({ characterName: m[1].replace(/-/g, ' '), characterId: m[2] }),
+				},
+				{
+					re: /(.+)-(\d+)-\d{2}-\d{2}-\d{4}-[a-z0-9]+\.log$/i,
+					extract: (m) => ({ characterName: m[1], characterId: m[2] }),
+				},
+				{
+					re: /(\d+)-\d+-\d{2}-\d{2}-([a-z0-9\-]+)\.log$/i,
+					extract: (m) => ({
+						characterName: m[2].slice(0, -6).replace('-', ' '),
+						characterId: m[1],
+					}),
+				},
+			];
+			for (const entry of extractedFiles) {
+				// Strip any directory prefix so anchored regexes still match
+				const baseName = entry.name.split('/').pop();
+				if (!baseName || !baseName.toLowerCase().endsWith('.log')) continue;
 
-                if (match) {
-                    const characterName = match[1];
-                    const characterId = match[2];
-
-                    const text = new TextDecoder().decode(file.buffer);
-                    const events = parseLogEvents(text);
-
-                    if (!allCharacterLogs[characterId]) {
-                        allCharacterLogs[characterId] = {
-                            name: characterName,
-                            logs: []
-                        };
-                    }
-
-                    allCharacterLogs[characterId].logs.push({
-                        date: file.name,
-                        events: events
-                    });
-                } else {
-                    const fileNamePattern = /(\d+)-\d+-\d{2}-\d{2}-([a-z0-9\-]+)\.log$/i;
-                    const match = fileNamePattern.exec(file.name);
-
-                    if (match) {
-                        const characterName = match[2].slice(0,-6).replace('-', ' ');
-                        const characterId = match[1];
-
-                        const text = new TextDecoder().decode(file.buffer);
-                        const events = parseLogEvents(text);
-
-                        if (!allCharacterLogs[characterId]) {
-                            allCharacterLogs[characterId] = {
-                                name: characterName,
-                                logs: []
-                            };
-                        }
-
-                        allCharacterLogs[characterId].logs.push({
-                            date: file.name,
-                            events: events
-                        });
-                    }
-                }
-            }
+				let parsed = null;
+				for (const { re, extract } of filePatterns) {
+					const match = re.exec(baseName);
+					if (match) {
+						parsed = extract(match);
+						break;
+					}
+				}
+				if (!parsed) continue;
+				const { characterName, characterId } = parsed;
+				const text = new TextDecoder().decode(entry.buffer);
+				const events = parseLogEvents(text);
+				if (!allCharacterLogs[characterId]) {
+					allCharacterLogs[characterId] = { name: characterName, logs: [] };
+				}
+				allCharacterLogs[characterId].logs.push({
+					date: baseName,
+					events: events,
+				});
+			}
 
             populateCharacterDropdown();
         } catch (error) {
